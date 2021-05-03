@@ -11,7 +11,7 @@
 
 namespace {
 const int kDepShift = 100;
-const int kThreads = 8;
+const int kThreads = 6;
 const int kDumpEvery = 50000;
 const int kSaveThreshold = 20;
 } // namespace
@@ -113,6 +113,8 @@ User ParseUser(const std::string &line) {
 }
 
 void ConstructAndSaveData(std::vector<User> &&users, int batch_id) {
+  std::cout << "Thread " << batch_id << " spawned at "
+            << std::chrono::system_clock::now() << std::endl;
   Data tracks_deps;
   int cnt = 0;
   int dump_id = 0;
@@ -152,6 +154,8 @@ int ReadAndSave() {
   std::vector<User> users;
   std::vector<std::future<void>> tasks;
   auto per_thread = users.size() / kThreads; // suppose, it divided
+  std::cout << "Threads: " << kThreads << ", per_thread " << per_thread
+            << std::endl;
   int thread_num = 0;
   users.reserve(per_thread);
   tasks.reserve(kThreads);
@@ -160,7 +164,9 @@ int ReadAndSave() {
     if (users.size() >= per_thread) {
       per_thread = 0;
       tasks.push_back(std::async(std::launch::async, ConstructAndSaveData,
-                                 std::move(users), thread_num++));
+                                 std::move(users), thread_num));
+      thread_num++;
+      users.clear();
     }
   }
   std::cout << "finish reading at " << std::chrono::system_clock::now()
