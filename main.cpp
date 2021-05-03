@@ -153,7 +153,7 @@ int ReadAndSave() {
   std::string line;
   std::vector<User> users;
   std::vector<std::future<void>> tasks;
-  static const int size = 5000000;
+  static const size_t size = 5000000;
   auto per_thread = size / kThreads; // suppose, it divided
   std::cout << "Threads: " << kThreads << ", per_thread " << per_thread
             << std::endl;
@@ -163,7 +163,6 @@ int ReadAndSave() {
   while (std::getline(is, line)) {
     users.push_back(ParseUser(line));
     if (users.size() >= per_thread) {
-      per_thread = 0;
       tasks.push_back(std::async(std::launch::async, ConstructAndSaveData,
                                  std::move(users), thread_num));
       thread_num++;
