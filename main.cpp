@@ -124,6 +124,7 @@ void ConstructAndSaveData(TIt begin, TIt end, int batch_id) {
       tracks_deps.deps.clear();
       tracks_deps.popularity.clear();
       dump_id++;
+      cnt = 0;
     }
   }
   if (!tracks_deps.deps.empty())
@@ -133,10 +134,10 @@ void ConstructAndSaveData(TIt begin, TIt end, int batch_id) {
 
 int main() {
   std::cout << "started_at " << std::chrono::system_clock::now() << std::endl;
-  std::ifstream is("data_train_100.yson");
+  std::ifstream is("data_train_1kk.yson");
   std::string line;
   std::vector<User> users;
-  users.reserve(100);
+  users.reserve(1000000);
   while (std::getline(is, line)) {
     users.push_back(ParseUser(line));
   }
