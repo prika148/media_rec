@@ -107,7 +107,7 @@ void ConstructAndSaveData(TIt begin, TIt end, int batch_id) {
   int dump_id = 0;
   for (auto it = begin; it < end; it++) {
     const User &user = *it;
-    for (int i = 0; i < user.tracks.size(); i++) {
+    for (int i = 0; i < static_cast<int>(user.tracks.size()); i++) {
       auto upper_bound =
           std::min(static_cast<int>(user.tracks.size()), i + kDepShift);
       for (int j = i; j < upper_bound; j++) {
@@ -121,6 +121,8 @@ void ConstructAndSaveData(TIt begin, TIt end, int batch_id) {
       std::cout << "Start dump " << filename << "; "
                 << std::chrono::system_clock::now() << std::endl;
       Save(tracks_deps, filename);
+      std::cout << "finish dump " << filename << "; "
+                << std::chrono::system_clock::now() << std::endl;
       tracks_deps.deps.clear();
       tracks_deps.popularity.clear();
       dump_id++;
