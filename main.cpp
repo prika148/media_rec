@@ -11,8 +11,9 @@
 
 namespace {
 const int kDepShift = 100;
-const int kThreads = 4;
-const int kDumpEvery = 100000;
+const int kThreads = 8;
+const int kDumpEvery = 50000;
+const int kSaveThreshold = 20;
 } // namespace
 
 using namespace date;
@@ -47,16 +48,27 @@ size_t CalcSize(const SparseMatrix &matrix) {
  * <depended_track_id> <weight>
  * ...
  */
-void Save(const Data &data, const std::string &filename) {
+void Save(Data &&data, const std::string &filename) {
   static const char kSep = ' ';
   std::ofstream os(filename);
   os << data.deps.size() << std::endl;
-  for (const auto it : data.deps) {
-    os << it.first << kSep << it.second.size() << kSep
-       << data.popularity.at(it.first) << std::endl;
-    for (const auto jt : it.second) {
+  for (auto it = data.deps.begin(); it != data.deps.end(); it++) {
+    if (kSaveThreshold > 0) {
+      auto jt = it->second.begin();
+      while (jt != it->second.end()) {
+        if (jt->second < kSaveThreshold) {
+          jt = it->second.erase(jt);
+        } else {
+          jt++;
+        }
+      }
+    }
+    os << it->first << kSep << it->second.size() << kSep
+       << data.popularity.at(it->first) << std::endl;
+    for (const auto jt : it->second) {
       os << jt.first << kSep << jt.second << std::endl;
     }
+    it->second.clear();
   }
   os.close();
 }
@@ -100,12 +112,11 @@ User ParseUser(const std::string &line) {
   return res;
 }
 
-template <typename TIt>
-void ConstructAndSaveData(TIt begin, TIt end, int batch_id) {
+void ConstructAndSaveData(std::vector<User> &&users, int batch_id) {
   Data tracks_deps;
   int cnt = 0;
   int dump_id = 0;
-  for (auto it = begin; it < end; it++) {
+  for (auto it = users.begin(); it < users.end(); it++) {
     const User &user = *it;
     for (int i = 0; i < static_cast<int>(user.tracks.size()); i++) {
       auto upper_bound =
@@ -120,7 +131,7 @@ void ConstructAndSaveData(TIt begin, TIt end, int batch_id) {
           "data_" + std::to_string(batch_id) + "_" + std::to_string(dump_id);
       std::cout << "Start dump " << filename << "; "
                 << std::chrono::system_clock::now() << std::endl;
-      Save(tracks_deps, filename);
+      Save(std::move(tracks_deps), filename);
       std::cout << "finish dump " << filename << "; "
                 << std::chrono::system_clock::now() << std::endl;
       tracks_deps.deps.clear();
@@ -130,36 +141,29 @@ void ConstructAndSaveData(TIt begin, TIt end, int batch_id) {
     }
   }
   if (!tracks_deps.deps.empty())
-    Save(tracks_deps,
+    Save(std::move(tracks_deps),
          "data_" + std::to_string(batch_id) + "_" + std::to_string(dump_id));
 }
 
-int main() {
+int ReadAndSave() {
   std::cout << "started_at " << std::chrono::system_clock::now() << std::endl;
-  std::ifstream is("data_train_1kk.yson");
+  std::ifstream is("data_train_100.yson");
   std::string line;
   std::vector<User> users;
-  users.reserve(1000000);
+  std::vector<std::future<void>> tasks;
+  auto per_thread = users.size() / kThreads; // suppose, it divided
+  int thread_num = 0;
+  users.reserve(per_thread);
+  tasks.reserve(kThreads);
   while (std::getline(is, line)) {
     users.push_back(ParseUser(line));
+    if (users.size() >= per_thread) {
+      per_thread = 0;
+      tasks.push_back(std::async(std::launch::async, ConstructAndSaveData,
+                                 std::move(users), thread_num++));
+    }
   }
   std::cout << "finish reading at " << std::chrono::system_clock::now()
-            << std::endl;
-  std::vector<std::future<void>> tasks;
-  tasks.reserve(kThreads);
-  auto shift = users.size() / kThreads; // suppose, it divided
-  auto it_b = users.begin();
-  auto it_e = users.begin() + shift;
-  int thread_num = 0;
-  while (it_b < users.end()) {
-    tasks.push_back(std::async(std::launch::async,
-                               ConstructAndSaveData<decltype(it_b)>, it_b, it_e,
-                               thread_num));
-    it_b = it_e;
-    it_e += shift;
-    thread_num++;
-  }
-  std::cout << "all threads started at " << std::chrono::system_clock::now()
             << std::endl;
   for (auto &fut : tasks) {
     fut.get();
@@ -167,3 +171,5 @@ int main() {
   std::cout << "finished at " << std::chrono::system_clock::now() << std::endl;
   return 0;
 }
+
+int main() { return ReadAndSave(); }
