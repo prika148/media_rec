@@ -11,7 +11,7 @@
 
 namespace {
 const int kDepShift = 100;
-const int kThreads = 6;
+const int kThreads = 8;
 const int kDumpEvery = 50000;
 const int kSaveThreshold = 20;
 } // namespace
@@ -130,7 +130,7 @@ void ConstructAndSaveData(std::vector<User> &&users, int batch_id) {
     }
     if (++cnt >= kDumpEvery) {
       auto filename =
-          "data_" + std::to_string(batch_id) + "_" + std::to_string(dump_id);
+          "r_data_" + std::to_string(batch_id) + "_" + std::to_string(dump_id);
       std::cout << "Start dump " << filename << "; "
                 << std::chrono::system_clock::now() << std::endl;
       Save(std::move(tracks_deps), filename);
@@ -144,16 +144,17 @@ void ConstructAndSaveData(std::vector<User> &&users, int batch_id) {
   }
   if (!tracks_deps.deps.empty())
     Save(std::move(tracks_deps),
-         "data_" + std::to_string(batch_id) + "_" + std::to_string(dump_id));
+         "r_data_" + std::to_string(batch_id) + "_" + std::to_string(dump_id));
 }
 
 int ReadAndSave() {
   std::cout << "started_at " << std::chrono::system_clock::now() << std::endl;
-  std::ifstream is("data_train_100.yson");
+  std::ifstream is("data_train_5kk.yson");
   std::string line;
   std::vector<User> users;
   std::vector<std::future<void>> tasks;
-  auto per_thread = users.size() / kThreads; // suppose, it divided
+  static const int size = 5000000;
+  auto per_thread = size / kThreads; // suppose, it divided
   std::cout << "Threads: " << kThreads << ", per_thread " << per_thread
             << std::endl;
   int thread_num = 0;
@@ -169,6 +170,7 @@ int ReadAndSave() {
       users.clear();
     }
   }
+  is.close();
   std::cout << "finish reading at " << std::chrono::system_clock::now()
             << std::endl;
   for (auto &fut : tasks) {
