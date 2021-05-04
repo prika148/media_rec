@@ -12,7 +12,7 @@
 namespace {
 const int kDepShift = 100;
 const int kThreads = 8;
-const int kDumpEvery = 31250;
+const int kCleanEvery = 31250;
 const int kSaveThreshold = 20;
 } // namespace
 
@@ -23,7 +23,6 @@ using SparseMatrix = std::unordered_map<IdT, std::unordered_map<IdT, int>>;
 
 struct Data {
   SparseMatrix deps;
-  std::unordered_map<int, int> popularity;
 };
 
 struct User {
@@ -39,6 +38,28 @@ size_t CalcSize(const SparseMatrix &matrix) {
   return deps_c;
 }
 
+int Reduce(SparseMatrix &matrix, int threshold) {
+  int removed = 0;
+  auto it = matrix.begin();
+  while (it != matrix.end()) {
+    auto jt = it->second.begin();
+    while (jt != it->second.end()) {
+      if (jt->second < threshold) {
+        removed++;
+        jt = it->second.erase(jt);
+      } else {
+        jt++;
+      }
+    }
+    if (it->second.empty()) {
+      it = matrix.erase(it);
+    } else {
+      it++;
+    }
+  }
+  return removed;
+}
+
 /**
  * Data format:
  * <tracks_cnt>
@@ -48,28 +69,17 @@ size_t CalcSize(const SparseMatrix &matrix) {
  * <depended_track_id> <weight>
  * ...
  */
-void Save(Data &&data, const std::string &filename) {
+void Save(const Data &data, const std::string &filename) {
   static const char kSep = ' ';
   std::ofstream os(filename);
   os << data.deps.size() << std::endl;
   for (auto it = data.deps.begin(); it != data.deps.end(); it++) {
-    if (kSaveThreshold > 0) {
-      auto jt = it->second.begin();
-      while (jt != it->second.end()) {
-        if (jt->second < kSaveThreshold) {
-          jt = it->second.erase(jt);
-        } else {
-          jt++;
-        }
-      }
-    }
     // Suppose, popularity is useless
     os << it->first << kSep << it->second.size() << kSep << /*popularity=*/0
        << std::endl;
     for (const auto jt : it->second) {
       os << jt.first << kSep << jt.second << std::endl;
     }
-    it->second.clear();
   }
   os.close();
 }
@@ -114,12 +124,11 @@ User ParseUser(const std::string &line) {
   return res;
 }
 
-void ConstructAndSaveData(std::vector<User> &&users, int batch_id) {
-  std::cout << "Thread " << batch_id << " spawned at "
+Data ConstructData(std::vector<User> &&users, int tread_id) {
+  std::cout << "Thread " << tread_id << " spawned at "
             << std::chrono::system_clock::now() << std::endl;
   Data tracks_deps;
   int cnt = 0;
-  int dump_id = 0;
   for (auto it = users.begin(); it < users.end(); it++) {
     const User &user = *it;
     for (int i = 0; i < static_cast<int>(user.tracks.size()); i++) {
@@ -128,60 +137,23 @@ void ConstructAndSaveData(std::vector<User> &&users, int batch_id) {
       for (int j = i; j < upper_bound; j++) {
         tracks_deps.deps[user.tracks[i]][user.tracks[j]] += kDepShift - (j - i);
       }
-      tracks_deps.popularity[user.tracks[i]] += 1;
     }
-    if (++cnt >= kDumpEvery) {
-      auto filename =
-          "r_data_" + std::to_string(batch_id) + "_" + std::to_string(dump_id);
-      std::cout << "Start dump " << filename << "; "
+    if (++cnt >= kCleanEvery) {
+      std::cout << "Start clean batch " << tread_id << "; "
+                << CalcSize(tracks_deps.deps) << "; "
                 << std::chrono::system_clock::now() << std::endl;
-      Save(std::move(tracks_deps), filename);
-      std::cout << "finish dump " << filename << "; "
+      auto removed = Reduce(tracks_deps.deps, kSaveThreshold);
+      std::cout << "After clean " << tread_id << ": " << removed << "; "
                 << std::chrono::system_clock::now() << std::endl;
-      tracks_deps.deps.clear();
-      tracks_deps.popularity.clear();
-      dump_id++;
       cnt = 0;
     }
   }
-  if (!tracks_deps.deps.empty())
-    Save(std::move(tracks_deps),
-         "r_data_" + std::to_string(batch_id) + "_" + std::to_string(dump_id));
+  Reduce(tracks_deps.deps, kSaveThreshold);
+  return tracks_deps;
 }
 
-int ReadAndSave() {
-  std::ifstream is("data_train_5kk.yson");
-  std::string line;
-  std::vector<User> users;
-  std::vector<std::future<void>> tasks;
-  static const size_t size = 5000000;
-  auto per_thread = size / kThreads; // suppose, it divided
-  std::cout << "Threads: " << kThreads << ", per_thread " << per_thread
-            << std::endl;
-  int thread_num = 0;
-  users.reserve(per_thread);
-  tasks.reserve(kThreads);
-  while (std::getline(is, line)) {
-    users.push_back(ParseUser(line));
-    if (users.size() >= per_thread) {
-      tasks.push_back(std::async(std::launch::async, ConstructAndSaveData,
-                                 std::move(users), thread_num));
-      thread_num++;
-      users.clear();
-    }
-  }
-  is.close();
-  std::cout << "finish reading at " << std::chrono::system_clock::now()
-            << std::endl;
-  for (auto &fut : tasks) {
-    fut.get();
-  }
-  return 0;
-}
-
-void Merge(Data &data, const std::string &filename) {
+void Merge(Data &data, const Data &new_data) {
   auto &deps = data.deps;
-  auto new_data = Load(filename);
   for (auto it = new_data.deps.begin(); it != new_data.deps.end(); it++) {
     auto &tr_deps = deps[it->first];
     for (auto jt = it->second.begin(); jt != it->second.end(); jt++) {
@@ -205,38 +177,94 @@ void MergeAndSave() {
     for (auto dump_id = 0; dump_id < 20; dump_id++) {
       auto filename =
           "r_data_" + std::to_string(batch_id) + "_" + std::to_string(dump_id);
-      Merge(res, filename);
+      Merge(res, Load(filename));
     }
   }
   Save(std::move(res), "r_merged_5kk");
 }
 
-void ReadData(std::vector<User> &users, const std::string &filename) {
+std::vector<User> ReadData(const std::string &filename, int reserve) {
+  std::vector<User> users;
+  users.reserve(reserve);
   std::ifstream is(filename);
   std::string line;
   while (std::getline(is, line)) {
     users.push_back(ParseUser(line));
-    if (users.size() % 100000 == 0) {
-      std::cout << users.size() << std::endl;
-    }
   }
-  is.close();
-}
-
-std::vector<User> ReadAllTrain() {
-  std::vector<User> users;
-  users.reserve(9000000);
-  ReadData(users, "data_train_5kk.yson");
-  ReadData(users, "data_train_4kk.yson");
-  std::cout << users.size() << " finished at "
-            << std::chrono::system_clock::now() << std::endl;
-  char tmp;
-  std::cin >> tmp;
   return users;
 }
 
+std::vector<User> ReadTrain() {
+  auto fut1 = std::async(std::launch::async, ReadData,
+                         std::string("data_train_5kk.yson"), 5000000);
+  auto fut2 = std::async(std::launch::async, ReadData,
+                         std::string("data_train_4kk.yson"), 4000000);
+  auto users1 = fut1.get();
+  auto users2 = fut2.get();
+  users1.insert(users1.end(), std::make_move_iterator(users2.begin()),
+                std::make_move_iterator(users2.end()));
+  users2.clear();
+  return users1;
+}
+
+Data TrainHard() {
+  auto fut3 = std::async(std::launch::async, ReadData,
+                         std::string("data_test.yson"), 1105889);
+  auto train = ReadTrain();
+  auto test = fut3.get();
+  std::cout << "read tasks done at " << std::chrono::system_clock::now()
+            << std::endl;
+  size_t shift = 2500000;
+  auto begin = train.begin();
+  auto end = train.begin() + shift;
+  std::vector<User> v1(std::make_move_iterator(begin),
+                       std::make_move_iterator(end));
+  begin += shift;
+  end += shift;
+  std::vector<User> v2(std::make_move_iterator(begin),
+                       std::make_move_iterator(end));
+  begin += shift;
+  end += shift;
+  std::vector<User> v3(std::make_move_iterator(begin),
+                       std::make_move_iterator(end));
+  begin += shift;
+  std::vector<User> v4(std::make_move_iterator(begin),
+                       std::make_move_iterator(train.end()));
+  v4.insert(v4.begin(), std::make_move_iterator(test.begin()),
+            std::make_move_iterator(test.end()));
+  test.clear();
+  train.clear();
+
+  std::cout << "slice vector done at " << std::chrono::system_clock::now()
+            << std::endl;
+
+  auto train_fut_1 =
+      std::async(std::launch::async, ConstructData, std::move(v1), 0);
+  auto train_fut_2 =
+      std::async(std::launch::async, ConstructData, std::move(v2), 1);
+  auto train_fut_3 =
+      std::async(std::launch::async, ConstructData, std::move(v3), 2);
+  auto train_fut_4 =
+      std::async(std::launch::async, ConstructData, std::move(v4), 3);
+
+  auto data = train_fut_1.get();
+  std::cout << "Merge 1 at " << std::chrono::system_clock::now() << std::endl;
+  Merge(data, train_fut_2.get());
+  std::cout << "Merge 1 at " << std::chrono::system_clock::now() << std::endl;
+  Merge(data, train_fut_3.get());
+  std::cout << "Merge 1 at " << std::chrono::system_clock::now() << std::endl;
+  Merge(data, train_fut_4.get());
+
+  std::cout << "Save at " << std::chrono::system_clock::now() << std::endl;
+  Save(data, "r_data_all");
+
+  return data;
+}
+
 int main() {
-  std::cout << "started_at " << std::chrono::system_clock::now() << std::endl;
-  ReadAllTrain();
+  std::cout << "started at " << std::chrono::system_clock::now() << std::endl;
+  TrainHard();
+  // TODO: predict
+  std::cout << "finished at " << std::chrono::system_clock::now() << std::endl;
   return 0;
 }
