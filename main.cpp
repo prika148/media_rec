@@ -12,8 +12,8 @@
 namespace {
 const int kDepShift = 100;
 const int kThreads = 8;
-const int kCleanEvery = 31250;
-const int kSaveThreshold = 20;
+const int kCleanEvery = 50000;
+int kSaveThreshold = 20;
 } // namespace
 
 using namespace date;
@@ -149,6 +149,8 @@ Data ConstructData(std::vector<User> &&users, int tread_id) {
     }
   }
   Reduce(tracks_deps.deps, kSaveThreshold);
+  std::cout << "Thread " << tread_id << " done at "
+            << std::chrono::system_clock::now() << std::endl;
   return tracks_deps;
 }
 
@@ -247,6 +249,12 @@ Data TrainHard() {
   auto train_fut_4 =
       std::async(std::launch::async, ConstructData, std::move(v4), 3);
 
+  while (train_fut_1.wait_for(std::chrono::seconds(0)) !=
+         std::future_status::ready) {
+    int thold;
+    std::cin >> thold;
+    kSaveThreshold = thold;
+  }
   auto data = train_fut_1.get();
   std::cout << "Merge 1 at " << std::chrono::system_clock::now() << std::endl;
   Merge(data, train_fut_2.get());
