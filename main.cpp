@@ -207,11 +207,12 @@ void MergeAndSave() {
       Merge(res, filename);
     }
   }
+  Save(std::move(res), "r_merged_5kk");
 }
 
 int main() {
   std::cout << "started_at " << std::chrono::system_clock::now() << std::endl;
-  ReadAndSave();
+  MergeAndSave();
   std::cout << "finished at " << std::chrono::system_clock::now() << std::endl;
   return 0;
 }
