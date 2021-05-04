@@ -200,7 +200,8 @@ void MergeAndSave() {
   Data res;
   for (auto batch_id = 0; batch_id < kThreads; batch_id++) {
     std::cout << "Start merge batch_id " << batch_id << " at "
-              << std::chrono::system_clock::now();
+              << std::chrono::system_clock::now() << std::endl
+              << std::flush;
     for (auto dump_id = 0; dump_id < 20; dump_id++) {
       auto filename =
           "r_data_" + std::to_string(batch_id) + "_" + std::to_string(dump_id);
