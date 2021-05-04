@@ -211,9 +211,32 @@ void MergeAndSave() {
   Save(std::move(res), "r_merged_5kk");
 }
 
+void ReadData(std::vector<User> &users, const std::string &filename) {
+  std::ifstream is(filename);
+  std::string line;
+  while (std::getline(is, line)) {
+    users.push_back(ParseUser(line));
+    if (users.size() % 100000 == 0) {
+      std::cout << users.size() << std::endl;
+    }
+  }
+  is.close();
+}
+
+std::vector<User> ReadAllTrain() {
+  std::vector<User> users;
+  users.reserve(9000000);
+  ReadData(users, "data_train_5kk.yson");
+  ReadData(users, "data_train_4kk.yson");
+  std::cout << users.size() << " finished at "
+            << std::chrono::system_clock::now() << std::endl;
+  char tmp;
+  std::cin >> tmp;
+  return users;
+}
+
 int main() {
   std::cout << "started_at " << std::chrono::system_clock::now() << std::endl;
-  MergeAndSave();
-  std::cout << "finished at " << std::chrono::system_clock::now() << std::endl;
+  ReadAllTrain();
   return 0;
 }
