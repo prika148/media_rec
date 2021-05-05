@@ -395,7 +395,9 @@ int main() {
   auto index2 = LoadIndex("r_data_7_0");
   std::cout << "Index loaded 2 " << std::chrono::system_clock::now()
             << std::endl;
-  auto users = ReadData("data_test");
+  // auto index1 = LoadIndex("r_data_t");
+  // auto index2 = index1;
+  auto users = ReadData("data_test.yson");
   int cnt = 0;
   std::vector<Prediction> predictions;
   predictions.reserve(users.size());
@@ -407,8 +409,9 @@ int main() {
                 << std::chrono::system_clock::now() << std::endl;
     }
   }
-  std::cout << "All predicted at " << std::chrono::system_clock::now()
-            << std::endl;
+  std::cout << "All predicted, sz = " << predictions.size()
+            << ", trivials: " << trivials << "at "
+            << std::chrono::system_clock::now() << std::endl;
   SavePredictions(std::move(predictions), "predicted");
   std::cout << "finished at " << std::chrono::system_clock::now() << std::endl;
   return 0;
