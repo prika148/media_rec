@@ -5,6 +5,7 @@
 #include <iostream>
 #include <list>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 #include "date.h"
@@ -25,9 +26,20 @@ struct Data {
   SparseMatrix deps;
 };
 
+struct ScoredTrackId {
+  IdT track_id;
+  int score;
+};
+
+using DataIndex = std::unordered_map<IdT, std::vector<ScoredTrackId>>;
 struct User {
   IdT id;
   std::vector<IdT> tracks{};
+};
+
+struct Prediction {
+  IdT user_id;
+  std::vector<IdT> prediction;
 };
 
 size_t CalcSize(const SparseMatrix &matrix) {
@@ -101,7 +113,8 @@ Data Load(const std::string &filename) {
     for (int j = 0; j < deps_cnt; j++) {
       int dep_tr_id, weight;
       is >> dep_tr_id >> weight;
-      track_deps[dep_tr_id] = weight;
+      if (dep_tr_id != id)
+        track_deps[dep_tr_id] = weight;
     }
   }
   return res;
@@ -185,9 +198,10 @@ void MergeAndSave() {
   Save(std::move(res), "r_merged_5kk");
 }
 
-std::vector<User> ReadData(const std::string &filename, int reserve) {
+std::vector<User> ReadData(const std::string &filename, int reserve = 0) {
   std::vector<User> users;
-  users.reserve(reserve);
+  if (reserve)
+    users.reserve(reserve);
   std::ifstream is(filename);
   std::string line;
   while (std::getline(is, line)) {
@@ -252,6 +266,7 @@ Data TrainHard() {
   while (train_fut_1.wait_for(std::chrono::seconds(0)) !=
          std::future_status::ready) {
     int thold;
+    std::cout << "Change thold:" << std::endl;
     std::cin >> thold;
     kSaveThreshold = thold;
   }
@@ -269,10 +284,132 @@ Data TrainHard() {
   return data;
 }
 
+std::vector<ScoredTrackId> Convert(std::unordered_map<IdT, int> &map) {
+  std::vector<ScoredTrackId> vec;
+  for (const auto &jt : map) {
+    vec.push_back({jt.first, jt.second});
+  }
+  std::sort(vec.begin(), vec.end(),
+            [](const ScoredTrackId &lhs, const ScoredTrackId &rhs) {
+              return lhs.score > rhs.score;
+            });
+  map.clear();
+  return vec;
+}
+
+DataIndex BuildIndex(Data &&data) {
+  DataIndex result;
+  for (auto &it : data.deps) {
+    result[it.first] = Convert(it.second);
+  }
+  return result;
+}
+
+Prediction Predict(const DataIndex &data1, const DataIndex &data2,
+                   const User &user, int &trivials) {
+  std::unordered_map<IdT, int> pretendents;
+  std::vector<IdT> tracks_tmp;
+  if (user.tracks.size() > kDepShift) {
+    tracks_tmp.insert(tracks_tmp.begin(), user.tracks.end() - kDepShift,
+                      user.tracks.end());
+  }
+  std::unordered_set<IdT> seen(user.tracks.begin(), user.tracks.end());
+  for (const auto &track_id : user.tracks) {
+    auto it = data1.find(track_id);
+    if (it != data1.end()) {
+      int cnt = 0;
+      for (auto scored : it->second) {
+        if (seen.count(scored.track_id))
+          continue;
+        pretendents[scored.track_id] += scored.score;
+        if (cnt++ >= kDepShift) {
+          break;
+        }
+      }
+    }
+    auto jt = data2.find(track_id);
+    if (jt != data2.end()) {
+      int cnt = 0;
+      for (auto scored : jt->second) {
+        if (seen.count(scored.track_id))
+          continue;
+        pretendents[scored.track_id] += scored.score;
+        if (cnt++ >= kDepShift) {
+          break;
+        }
+      }
+    }
+  }
+  auto sorted_pr = Convert(pretendents);
+  Prediction result{user.id};
+  auto end = std::min(sorted_pr.begin() + 100, sorted_pr.end());
+  for (auto it = sorted_pr.begin(); it != end; it++) {
+    result.prediction.push_back(it->track_id);
+  }
+  if (result.prediction.empty()) {
+    trivials++;
+    static const std::vector<IdT> kDummy = ([]() {
+      std::vector<IdT> res;
+      for (int i = 0; i < 100; i++)
+        res.push_back(i);
+      return res;
+    })();
+    result.prediction = kDummy;
+  }
+  return result;
+}
+
+DataIndex LoadIndex(const std::string &filename) {
+  return BuildIndex(Load(filename));
+}
+
+void SavePredictions(std::vector<Prediction> &&predictions,
+                     const std::string &filename) {
+  std::ofstream os(filename);
+  static const char kCellSep = ',';
+  os << "user_id" << kCellSep << "prediction" << std::endl;
+  for (const auto &user : predictions) {
+    os << user.user_id << kCellSep;
+    os << '"';
+    if (user.prediction.empty()) {
+      os.close();
+      throw std::runtime_error("!!! Empty predictions for " +
+                               std::to_string(user.user_id));
+    }
+    auto it = user.prediction.begin();
+    os << *it;
+    it++;
+    for (; it != user.prediction.end(); it++) {
+      os << "\t" << *it;
+    }
+    os << '"' << std::endl;
+  }
+  os.close();
+}
+
 int main() {
   std::cout << "started at " << std::chrono::system_clock::now() << std::endl;
-  TrainHard();
-  // TODO: predict
+  auto index1 = LoadIndex("r_data_all");
+  std::cout << "Index loaded 1 " << std::chrono::system_clock::now()
+            << std::endl;
+  auto index2 = LoadIndex("r_data_7_0");
+  std::cout << "Index loaded 2 " << std::chrono::system_clock::now()
+            << std::endl;
+  auto users = ReadData("data_test");
+  int cnt = 0;
+  std::vector<Prediction> predictions;
+  predictions.reserve(users.size());
+  int trivials = 0;
+  for (const auto &user : users) {
+    predictions.push_back(Predict(index1, index2, user, trivials));
+    if (++cnt % 1000 == 0) {
+      std::cout << "user " << cnt << ", trivials: " << trivials << "; at "
+                << std::chrono::system_clock::now() << std::endl;
+    }
+  }
+  std::cout << "All predicted at " << std::chrono::system_clock::now()
+            << std::endl;
+  SavePredictions(std::move(predictions), "predicted");
   std::cout << "finished at " << std::chrono::system_clock::now() << std::endl;
   return 0;
 }
