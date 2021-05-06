@@ -305,8 +305,7 @@ DataIndex BuildIndex(Data &&data) {
   return result;
 }
 
-Prediction Predict(const DataIndex &data1, const DataIndex &data2,
-                   const User &user, int &trivials) {
+Prediction Predict(const DataIndex &data1, const User &user, int &trivials) {
   std::unordered_map<IdT, int> pretendents;
   std::vector<IdT> tracks_tmp;
   if (user.tracks.size() > kDepShift) {
@@ -319,18 +318,6 @@ Prediction Predict(const DataIndex &data1, const DataIndex &data2,
     if (it != data1.end()) {
       int cnt = 0;
       for (auto scored : it->second) {
-        if (seen.count(scored.track_id))
-          continue;
-        pretendents[scored.track_id] += scored.score;
-        if (cnt++ >= kDepShift) {
-          break;
-        }
-      }
-    }
-    auto jt = data2.find(track_id);
-    if (jt != data2.end()) {
-      int cnt = 0;
-      for (auto scored : jt->second) {
         if (seen.count(scored.track_id))
           continue;
         pretendents[scored.track_id] += scored.score;
@@ -392,18 +379,20 @@ int main() {
   auto index1 = LoadIndex("r_data_all");
   std::cout << "Index loaded 1 " << std::chrono::system_clock::now()
             << std::endl;
-  auto index2 = LoadIndex("r_data_7_0");
-  std::cout << "Index loaded 2 " << std::chrono::system_clock::now()
-            << std::endl;
+  // auto index2 = LoadIndex("r_data_7_0");
+  // std::cout << "Index loaded 2 " << std::chrono::system_clock::now()
+  //           << std::endl;
   // auto index1 = LoadIndex("r_data_t");
   // auto index2 = index1;
   auto users = ReadData("data_test.yson");
+  std::cout << "Finish read data at " << std::chrono::system_clock::now()
+            << std::endl;
   int cnt = 0;
   std::vector<Prediction> predictions;
   predictions.reserve(users.size());
   int trivials = 0;
   for (const auto &user : users) {
-    predictions.push_back(Predict(index1, index2, user, trivials));
+    predictions.push_back(Predict(index1, user, trivials));
     if (++cnt % 1000 == 0) {
       std::cout << "user " << cnt << ", trivials: " << trivials << "; at "
                 << std::chrono::system_clock::now() << std::endl;
