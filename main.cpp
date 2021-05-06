@@ -353,11 +353,8 @@ DataIndex LoadIndex(const std::string &filename) {
 void SavePredictions(std::vector<Prediction> &&predictions,
                      const std::string &filename) {
   std::ofstream os(filename);
-  static const char kCellSep = ',';
-  os << "user_id" << kCellSep << "prediction" << std::endl;
   for (const auto &user : predictions) {
-    os << user.user_id << kCellSep;
-    os << '"';
+    os << "{\"user_id\":" << user.user_id << ", \"prediction\":\"" << std::endl;
     if (user.prediction.empty()) {
       os.close();
       throw std::runtime_error("!!! Empty predictions for " +
@@ -367,9 +364,9 @@ void SavePredictions(std::vector<Prediction> &&predictions,
     os << *it;
     it++;
     for (; it != user.prediction.end(); it++) {
-      os << "\t" << *it;
+      os << "\\t" << *it;
     }
-    os << '"' << std::endl;
+    os << "\"}" << std::endl;
   }
   os.close();
 }
@@ -401,7 +398,7 @@ int main() {
   std::cout << "All predicted, sz = " << predictions.size()
             << ", trivials: " << trivials << "at "
             << std::chrono::system_clock::now() << std::endl;
-  SavePredictions(std::move(predictions), "predicted");
+  SavePredictions(std::move(predictions), "predicted.json");
   std::cout << "finished at " << std::chrono::system_clock::now() << std::endl;
   return 0;
 }
