@@ -383,7 +383,7 @@ int PredictAll() {
 int main(int argc, char **argv) {
   IdT start_from;
   IdT *start_from_opt = nullptr;
-  if (argc > 0) {
+  if (argc > 1) {
     if (std::string{"--train-from"} == argv[1]) {
       start_from = static_cast<IdT>(std::stoi(argv[2]));
       start_from_opt = &start_from;
