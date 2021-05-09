@@ -13,7 +13,7 @@
 namespace {
 const int kDepShift = 100;
 const int kThreads = 8;
-const int kCleanEvery = 50000;
+const int kCleanEvery = 100000;
 int kSaveThreshold = 20;
 } // namespace
 
@@ -137,13 +137,23 @@ User ParseUser(const std::string &line) {
   return res;
 }
 
-Data ConstructData(std::vector<User> &&users, int tread_id) {
+Data ConstructData(std::vector<User> &&users, int tread_id,
+                   IdT *start_from_opt) {
   std::cout << "Thread " << tread_id << " spawned at "
             << std::chrono::system_clock::now() << std::endl;
   Data tracks_deps;
   int cnt = 0;
+  bool start_found = !start_from_opt;
   for (auto it = users.begin(); it < users.end(); it++) {
     const User &user = *it;
+    if (!start_found) {
+      if (user.id == *start_from_opt) {
+        start_found = true;
+        tracks_deps = Load("r_data_big");
+      } else {
+        continue;
+      }
+    }
     for (int i = 0; i < static_cast<int>(user.tracks.size()); i++) {
       auto upper_bound =
           std::min(static_cast<int>(user.tracks.size()), i + kDepShift);
@@ -158,6 +168,10 @@ Data ConstructData(std::vector<User> &&users, int tread_id) {
       auto removed = Reduce(tracks_deps.deps, kSaveThreshold);
       std::cout << "After clean " << tread_id << ": " << removed << "; "
                 << std::chrono::system_clock::now() << std::endl;
+      Save(tracks_deps, "r_data_big.tmp");
+      system("mv r_data_big.tmp r_data_big");
+      std::cout << user.id << " Saved at " << std::chrono::system_clock::now()
+                << std::endl;
       cnt = 0;
     }
   }
@@ -223,63 +237,32 @@ std::vector<User> ReadTrain() {
   return users1;
 }
 
-Data TrainHard() {
+Data TrainHard(IdT *start_from_opt) {
   auto fut3 = std::async(std::launch::async, ReadData,
                          std::string("data_test.yson"), 1105889);
   auto train = ReadTrain();
   auto test = fut3.get();
   std::cout << "read tasks done at " << std::chrono::system_clock::now()
             << std::endl;
-  size_t shift = 2500000;
-  auto begin = train.begin();
-  auto end = train.begin() + shift;
-  std::vector<User> v1(std::make_move_iterator(begin),
-                       std::make_move_iterator(end));
-  begin += shift;
-  end += shift;
-  std::vector<User> v2(std::make_move_iterator(begin),
-                       std::make_move_iterator(end));
-  begin += shift;
-  end += shift;
-  std::vector<User> v3(std::make_move_iterator(begin),
-                       std::make_move_iterator(end));
-  begin += shift;
-  std::vector<User> v4(std::make_move_iterator(begin),
-                       std::make_move_iterator(train.end()));
-  v4.insert(v4.begin(), std::make_move_iterator(test.begin()),
-            std::make_move_iterator(test.end()));
+  train.insert(train.begin(), std::make_move_iterator(test.begin()),
+               std::make_move_iterator(test.end()));
   test.clear();
-  train.clear();
 
-  std::cout << "slice vector done at " << std::chrono::system_clock::now()
-            << std::endl;
+  auto train_fut = std::async(std::launch::async, ConstructData,
+                              std::move(train), 0, start_from_opt);
 
-  auto train_fut_1 =
-      std::async(std::launch::async, ConstructData, std::move(v1), 0);
-  auto train_fut_2 =
-      std::async(std::launch::async, ConstructData, std::move(v2), 1);
-  auto train_fut_3 =
-      std::async(std::launch::async, ConstructData, std::move(v3), 2);
-  auto train_fut_4 =
-      std::async(std::launch::async, ConstructData, std::move(v4), 3);
-
-  while (train_fut_1.wait_for(std::chrono::seconds(0)) !=
+  while (train_fut.wait_for(std::chrono::seconds(0)) !=
          std::future_status::ready) {
     int thold;
     std::cout << "Change thold:" << std::endl;
     std::cin >> thold;
     kSaveThreshold = thold;
   }
-  auto data = train_fut_1.get();
-  std::cout << "Merge 1 at " << std::chrono::system_clock::now() << std::endl;
-  Merge(data, train_fut_2.get());
-  std::cout << "Merge 1 at " << std::chrono::system_clock::now() << std::endl;
-  Merge(data, train_fut_3.get());
-  std::cout << "Merge 1 at " << std::chrono::system_clock::now() << std::endl;
-  Merge(data, train_fut_4.get());
+  auto data = train_fut.get();
 
   std::cout << "Save at " << std::chrono::system_clock::now() << std::endl;
-  Save(data, "r_data_all");
+  Save(data, "r_data_big.tmp");
+  system("mv r_data_big.tmp r_data_big");
 
   return data;
 }
@@ -354,7 +337,7 @@ void SavePredictions(std::vector<Prediction> &&predictions,
                      const std::string &filename) {
   std::ofstream os(filename);
   for (const auto &user : predictions) {
-    os << "{\"user_id\":" << user.user_id << ", \"prediction\":\"" << std::endl;
+    os << "{\"user_id\":" << user.user_id << ", \"prediction\":\"";
     if (user.prediction.empty()) {
       os.close();
       throw std::runtime_error("!!! Empty predictions for " +
@@ -371,16 +354,10 @@ void SavePredictions(std::vector<Prediction> &&predictions,
   os.close();
 }
 
-int main() {
+int PredictAll() {
   std::cout << "started at " << std::chrono::system_clock::now() << std::endl;
-  auto index1 = LoadIndex("r_data_all");
-  std::cout << "Index loaded 1 " << std::chrono::system_clock::now()
-            << std::endl;
-  // auto index2 = LoadIndex("r_data_7_0");
-  // std::cout << "Index loaded 2 " << std::chrono::system_clock::now()
-  //           << std::endl;
-  // auto index1 = LoadIndex("r_data_t");
-  // auto index2 = index1;
+  auto index1 = LoadIndex("r_data_big");
+  std::cout << "Index loaded " << std::chrono::system_clock::now() << std::endl;
   auto users = ReadData("data_test.yson");
   std::cout << "Finish read data at " << std::chrono::system_clock::now()
             << std::endl;
@@ -401,4 +378,19 @@ int main() {
   SavePredictions(std::move(predictions), "predicted.json");
   std::cout << "finished at " << std::chrono::system_clock::now() << std::endl;
   return 0;
+}
+
+int main(int argc, char **argv) {
+  IdT start_from;
+  IdT *start_from_opt = nullptr;
+  if (argc > 0) {
+    if (std::string{"--train-from"} == argv[1]) {
+      start_from = static_cast<IdT>(std::stoi(argv[2]));
+      start_from_opt = &start_from;
+    } else if (std::string{"--predict"} == argv[1]) {
+      return PredictAll();
+    }
+  }
+  TrainHard(start_from_opt);
+  return PredictAll();
 }
