@@ -13,8 +13,9 @@
 namespace {
 const int kDepShift = 100;
 const int kThreads = 8;
-const int kCleanEvery = 100000;
-int kSaveThreshold = 20;
+const int kCleanEvery = 50000;
+const int kDumpEvery = 200000;
+int kSaveThreshold = 50;
 } // namespace
 
 using namespace date;
@@ -142,7 +143,7 @@ Data ConstructData(std::vector<User> &&users, int tread_id,
   std::cout << "Thread " << tread_id << " spawned at "
             << std::chrono::system_clock::now() << std::endl;
   Data tracks_deps;
-  int cnt = 0;
+  int cnt = 1;
   bool start_found = !start_from_opt;
   for (auto it = users.begin(); it < users.end(); it++) {
     const User &user = *it;
@@ -161,19 +162,24 @@ Data ConstructData(std::vector<User> &&users, int tread_id,
         tracks_deps.deps[user.tracks[i]][user.tracks[j]] += kDepShift - (j - i);
       }
     }
-    if (++cnt >= kCleanEvery) {
+    if (cnt % kCleanEvery == 0) {
       std::cout << "Start clean batch " << tread_id << "; "
                 << CalcSize(tracks_deps.deps) << "; "
                 << std::chrono::system_clock::now() << std::endl;
       auto removed = Reduce(tracks_deps.deps, kSaveThreshold);
       std::cout << "After clean " << tread_id << ": " << removed << "; "
                 << std::chrono::system_clock::now() << std::endl;
+    }
+    if (cnt % kDumpEvery == 0) {
+      std::cout << "Start save " << tread_id << "; "
+                << CalcSize(tracks_deps.deps) << "; "
+                << std::chrono::system_clock::now() << std::endl;
       Save(tracks_deps, "r_data_big.tmp");
       system("mv r_data_big.tmp r_data_big");
       std::cout << user.id << " Saved at " << std::chrono::system_clock::now()
                 << std::endl;
-      cnt = 0;
     }
+    cnt++;
   }
   Reduce(tracks_deps.deps, kSaveThreshold);
   std::cout << "Thread " << tread_id << " done at "
